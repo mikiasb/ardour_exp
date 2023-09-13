@@ -2710,23 +2710,9 @@ Editor::cut_copy_section (ARDOUR::SectionOperation const op)
 	if (!get_selection_extents (start, end) || !_session) {
 		return;
 	}
-#if 0
-	TempoMap::SharedPtr tmap (TempoMap::use());
-	if ((tmap->tempos ().size () > 1 || tmap->meters ().size () > 1 || tmap->bartimes ().size () > 1) && UIConfiguration::instance().get_ask_cut_copy_section_tempo_map ()) {
-		ArdourMessageDialog msg (_("Cut/Copy Section does not yet include the Tempo Map\nDo you still want to proceed?"), false, MESSAGE_QUESTION, BUTTONS_YES_NO, true)  ;
-		msg.set_title (_("Cut/Copy without Tempo Map"));
-		Gtk::CheckButton cb (_("Do not show this dialog again."));
-		msg.get_vbox()->pack_start (cb);
-		cb.show ();
-		if (msg.run () != RESPONSE_YES) {
-			return;
-		}
-		if (cb.get_active ()) {
-			UIConfiguration::instance().set_ask_cut_copy_section_tempo_map (false);
-		}
-	}
-#endif
-	timepos_t to (get_preferred_edit_position ());
+
+	timepos_t to = Profile->get_mixbus () ? timepos_t (_session->audible_sample ()) : get_preferred_edit_position ();
+
 	_session->cut_copy_section (start, end, to, op);
 
 	if (op == DeleteSection) {
@@ -4642,13 +4628,19 @@ Editor::cut_copy (CutCopyOp op)
 		if (get_edit_op_range (start, end)) {
 			selection->set (start, end);
 		}
-	} else if (!selection->time.empty()) {
+	} else if (!selection->time.empty() && !selection->tracks.empty()) {
 		begin_reversible_command (opname + ' ' + _("range"));
 
 		did_edit = true;
 		cut_copy_ranges (op);
 
 		if (op == Cut || op == Delete) {
+			selection->clear_time ();
+		}
+	} else if (!selection->time.empty()) {
+		if (op == Delete) {
+			/* note: UNDO is handled inside cut_copy_section */
+			cut_copy_section (DeleteSection);
 			selection->clear_time ();
 		}
 	}

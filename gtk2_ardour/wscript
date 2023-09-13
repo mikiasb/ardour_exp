@@ -94,6 +94,7 @@ gtk2_ardour_sources = [
         'editor_cursors.cc',
         'editor_drag.cc',
         'editor_route_groups.cc',
+        'editor_section_box.cc',
         'editor_export_audio.cc',
         'editor_group_tabs.cc',
         'editor_keys.cc',
@@ -173,7 +174,6 @@ gtk2_ardour_sources = [
         'midi_region_operations_box.cc',
         'midi_region_properties_box.cc',
         'midi_trigger_properties_box.cc',
-        'midi_scroomer.cc',
         'midi_selection.cc',
         'midi_streamview.cc',
         'midi_time_axis.cc',
@@ -429,13 +429,14 @@ def enoify (major, minor):
             return "\\n\\\"The Shutov Assembly\\\"" # 1992
         if minor == 5:
             return "\\n\\\"Neroli\\\"" # 1993
-        if minor == 6:
+    elif major == 8:
+        if minor == 0:
             return "\\n\\\"Spinner\\\"" # 1995
-        if minor == 7:
+        if minor == 1:
             return "\\n\\\"The Drop\\\"" # 1997
-        if minor == 8:
+        if minor == 2:
             return "\\n\\\"Tracks and Traces\\\"" # 1997
-        if minor == 9:
+        if minor == 3:
             return "\\n\\\"Music for White Cube\\\"" # 1997
     return "\\\"\\\""
 

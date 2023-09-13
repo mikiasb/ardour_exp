@@ -69,6 +69,8 @@ Editor::clear_marker_display ()
 		delete i->second;
 	}
 
+	entered_marker = 0;
+
 	location_markers.clear ();
 	_sorted_marker_lists.clear ();
 }
@@ -619,6 +621,11 @@ Editor::refresh_location_display_internal (const Locations::LocationList& locati
 
 			LocationMarkers* m = i->second;
 			location_markers.erase (i);
+
+			if (m && (entered_marker == m->start || entered_marker == m->end)) {
+				entered_marker = 0;
+			}
+
 			delete m;
 		}
 
@@ -670,6 +677,7 @@ Editor::update_section_rects ()
 
 			std::string const color = bright ? "arrangement rect" : "arrangement rect alt";
 			rect->set_fill_color (UIConfiguration::instance().color (color));
+			rect->Event.connect (sigc::bind (sigc::mem_fun (this, &Editor::section_rect_event), l,  rect, color));
 
 			Editor::LocationMarkers* markers = find_location_markers (l);
 			if (markers) {
@@ -896,6 +904,10 @@ Editor::remove_marker (ArdourMarker* marker)
 		return;
 	}
 
+	if (entered_marker == marker) {
+		entered_marker = 0;
+	}
+
 	if (marker->type() == ArdourMarker::RegionCue) {
 		Glib::signal_idle().connect (sigc::bind (sigc::mem_fun(*this, &Editor::really_remove_region_marker), marker));
 	} else {
@@ -970,6 +982,11 @@ Editor::location_gone (Location *location)
 
 			LocationMarkers* m = i->second;
 			location_markers.erase (i);
+
+			if (m && (entered_marker == m->start || entered_marker == m->end)) {
+				entered_marker = 0;
+			}
+
 			delete m;
 
 			/* Markers that visually overlap with this (removed) marker
@@ -1013,9 +1030,6 @@ Editor::tempo_map_marker_context_menu (GdkEventButton* ev, ArdourCanvas::Item* i
 		build_meter_marker_menu (mm, can_remove);
 		meter_marker_menu->popup (1, ev->time);
 	} else if (tm) {
-		if (!tm->tempo().active()) {
-			return;
-		}
 		can_remove = !tm->tempo().map().is_initial(tm->tempo()) && !tm->tempo().locked_to_meter();
 		build_tempo_marker_menu (tm, can_remove);
 		tempo_marker_menu->popup (1, ev->time);

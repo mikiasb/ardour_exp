@@ -560,11 +560,12 @@ Trigger::set_ui (void* p)
 }
 
 void
-Trigger::bang ()
+Trigger::bang (float velocity)
 {
 	if (!_region) {
 		return;
 	}
+	_pending_velocity_gain = velocity;
 	_bang.fetch_add (1);
 	DEBUG_TRACE (DEBUG::Triggers, string_compose ("bang on %1\n", _index));
 }
@@ -1967,10 +1968,11 @@ AudioTrigger::audio_run (BufferSet& bufs, samplepos_t start_sample, samplepos_t 
 
 				/* still have data to push into the stretcher */
 
-				to_stretcher = (pframes_t) std::min (samplecnt_t (rb_blocksize), (last_readable_sample - read_index));
-				const bool at_end = (to_stretcher < rb_blocksize);
-
 				while ((pframes_t) avail < nframes && (read_index < last_readable_sample)) {
+
+					to_stretcher = (pframes_t) std::min (samplecnt_t (rb_blocksize), (last_readable_sample - read_index));
+					bool at_end = (to_stretcher < rb_blocksize);
+
 					/* keep feeding the stretcher in chunks of "to_stretcher",
 					 * until there's nframes of data available, or we reach
 					 * the end of the region
@@ -1988,6 +1990,7 @@ AudioTrigger::audio_run (BufferSet& bufs, samplepos_t start_sample, samplepos_t 
 					 */
 
 					_stretcher->process (&in[0], to_stretcher, at_end);
+
 					read_index += to_stretcher;
 					avail = _stretcher->available ();
 
@@ -2070,7 +2073,13 @@ AudioTrigger::audio_run (BufferSet& bufs, samplepos_t start_sample, samplepos_t 
 				AudioBuffer& buf (bufs.get_audio (chn));
 				Sample* src = do_stretch ? bufp[channel] : (data[channel] + read_index);
 
-				gain_t gain = _velocity_gain * _gain;  //incorporate the gain from velocity_effect
+				gain_t gain;
+
+				if (_velocity_effect) {
+					gain = (_velocity_effect * _velocity_gain) * _gain;
+				} else {
+					gain = _gain;
+				}
 
 				if (gain != 1.0f) {
 					buf.accumulate_with_gain_from (src, from_stretcher, gain, dest_offset);
@@ -3692,6 +3701,12 @@ TriggerBox::clear_all_triggers ()
 }
 
 void
+TriggerBox::clear_cue (int cue)
+{
+	all_triggers[cue]->set_region (std::shared_ptr<Region>());
+}
+
+void
 TriggerBox::set_all_launch_style (ARDOUR::Trigger::LaunchStyle ls)
 {
 	for (uint64_t n = 0; n < all_triggers.size(); ++n) {
@@ -3754,11 +3769,11 @@ TriggerBox::stop_all_quantized ()
 }
 
 void
-TriggerBox::bang_trigger_at (Triggers::size_type row)
+TriggerBox::bang_trigger_at (Triggers::size_type row, float velocity)
 {
 	TriggerPtr t = trigger(row);
 	if (t && t->region()) {
-		t->bang();
+		t->bang (velocity);
 	} else {
 		/* by convention, an empty slot is effectively a STOP button */
 		stop_all_quantized();
@@ -3884,7 +3899,7 @@ TriggerBox::midi_input_handler (MIDI::Parser&, MIDI::byte* buf, size_t sz, sampl
 		int y;
 
 		if (lookup_custom_midi_binding (msg, x, y)) {
-			AudioEngine::instance()->session()->bang_trigger_at (x, y);
+			AudioEngine::instance()->session()->bang_trigger_at (x, y, ev.velocity());
 		}
 	}
 

@@ -192,7 +192,6 @@ class LIBTEMPORAL_API Tempo {
 		, _super_note_type_per_second (double_npm_to_snps (npm))
 		, _end_super_note_type_per_second (double_npm_to_snps (npm))
 		, _note_type (note_type)
-		, _active (true)
 		, _locked_to_meter (false)
 		, _continuing (false)
 		{}
@@ -205,7 +204,6 @@ class LIBTEMPORAL_API Tempo {
 		, _super_note_type_per_second (double_npm_to_snps (npm))
 		, _end_super_note_type_per_second (double_npm_to_snps (enpm))
 		, _note_type (note_type)
-		, _active (true)
 		, _locked_to_meter (false)
 		, _continuing (false)
 		{}
@@ -252,9 +250,6 @@ class LIBTEMPORAL_API Tempo {
 		t = PBD::muldiv_round (Temporal::ticks_per_beat, remain, big_numerator);
 	}
 
-	bool active () const { return _active; }
-	void set_active (bool yn) { _active = yn; }
-
 	bool locked_to_meter ()  const { return _locked_to_meter; }
 	void set_locked_to_meter (bool yn) { _locked_to_meter = yn; }
 
@@ -271,7 +266,6 @@ class LIBTEMPORAL_API Tempo {
 		return _superclocks_per_note_type == other._superclocks_per_note_type &&
 		_end_superclocks_per_note_type == other._end_superclocks_per_note_type &&
 		_note_type == other._note_type &&
-		_active == other._active &&
 		_locked_to_meter == other._locked_to_meter &&
 		_continuing == other._continuing;
 	}
@@ -280,7 +274,6 @@ class LIBTEMPORAL_API Tempo {
 		return _superclocks_per_note_type != other._superclocks_per_note_type ||
 			_end_superclocks_per_note_type != other._end_superclocks_per_note_type ||
 			_note_type != other._note_type ||
-			_active != other._active ||
 			_locked_to_meter != other._locked_to_meter ||
 			_continuing != other._continuing;
 	}
@@ -296,7 +289,6 @@ class LIBTEMPORAL_API Tempo {
 	uint64_t     _super_note_type_per_second;
 	uint64_t     _end_super_note_type_per_second;
 	int8_t       _note_type;
-	bool         _active;
 	bool         _locked_to_meter; /* XXX name has unclear meaning with nutempo */
 	bool         _continuing;
 
@@ -339,7 +331,8 @@ class LIBTEMPORAL_API Meter {
 	BBT_Time bbt_add (BBT_Time const & bbt, BBT_Offset const & add) const;
 	BBT_Time bbt_subtract (BBT_Time const & bbt, BBT_Offset const & sub) const;
 	BBT_Time round_to_bar (BBT_Time const &) const;
-	BBT_Time round_up_to_beat (BBT_Time const &) const;
+	BBT_Time round_up_to_beat_div (BBT_Time const &, int beat_div) const;
+	BBT_Time round_up_to_beat (BBT_Time const & bbt) const { return round_up_to_beat_div (bbt, 1); }
 	BBT_Time round_to_beat (BBT_Time const &) const;
 	Beats    to_quarters (BBT_Offset const &) const;
 
@@ -1164,7 +1157,6 @@ class /*LIBTEMPORAL_API*/ TempoMap : public PBD::StatefulDestructible
 		double end_note_types_per_minute;
 		double note_type;
 		bool continuing; /* "clamped" in actual legacy stuff */
-		bool active;
 	};
 
 	struct LegacyMeterState

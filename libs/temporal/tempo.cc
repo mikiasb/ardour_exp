@@ -105,9 +105,6 @@ Tempo::Tempo (XMLNode const & node)
 		throw failed_constructor ();
 	}
 
-	if (!node.get_property (X_("active"), _active)) {
-		throw failed_constructor ();
-	}
 	if (!node.get_property (X_("locked-to-meter"), _locked_to_meter)) {
 		_locked_to_meter = true;
 	}
@@ -150,7 +147,6 @@ Tempo::get_state () const
 	node->set_property (X_("enpm"), end_note_types_per_minute());
 	node->set_property (X_("note-type"), note_type());
 	node->set_property (X_("type"), type());
-	node->set_property (X_("active"), active());
 	node->set_property (X_("locked-to-meter"), _locked_to_meter);
 	node->set_property (X_("continuing"), _continuing);
 
@@ -173,7 +169,6 @@ Tempo::set_state (XMLNode const & node, int /*version*/)
 	_end_super_note_type_per_second = double_npm_to_snps (_enpm);
 
 	node.get_property (X_("note-type"), _note_type);
-	node.get_property (X_("active"), _active);
 
 	if (!node.get_property (X_("locked-to-meter"), _locked_to_meter)) {
 		_locked_to_meter = true;
@@ -364,9 +359,9 @@ Meter::round_to_bar (Temporal::BBT_Time const & bbt) const
 }
 
 Temporal::BBT_Time
-Meter::round_up_to_beat (Temporal::BBT_Time const & bbt) const
+Meter::round_up_to_beat_div (Temporal::BBT_Time const & bbt, int beat_div) const
 {
-	Temporal::BBT_Time b = bbt.round_up_to_beat ();
+	Temporal::BBT_Time b = bbt.round_up_to_beat_div (beat_div);
 	if (b.beats > _divisions_per_bar) {
 		b.bars++;
 		b.beats = 1;
@@ -2787,7 +2782,7 @@ TempoMap::fill_grid_by_walking (TempoMapPoints& ret, Points::const_iterator& p_i
 				/* Yep, too far. So we need to reset and take
 				   the next (music time point) into account.
 				*/
-				DEBUG_TRACE (DEBUG::Grid, string_compose ("we've reached/passed the next point via sclock, BBT %1 audio %2 point %3\n", bbt, start, *p));
+				DEBUG_TRACE (DEBUG::Grid, string_compose ("we've reached/passed the next point via sclock, BBT %1 audio %2 point %3, using metric %4\n", bbt, start, *p, metric));
 				reset = true;
 			} else {
 				DEBUG_TRACE (DEBUG::Grid, string_compose ("confirmed that BBT %1 has audio time %2 before next point %3\n", bbt, start, *p));
@@ -2818,10 +2813,44 @@ TempoMap::fill_grid_by_walking (TempoMapPoints& ret, Points::const_iterator& p_i
 				metric = TempoMetric (*tp, *mp);
 				DEBUG_TRACE (DEBUG::Grid, string_compose ("reset metric from music-time point %1, now %2\n", *mtp, metric));
 
-				bbt = BBT_Argument (metric.reftime(), p->bbt());
-				DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start using bbt %1 as %2\n", p->bbt(), bbt));
-				start = p->sclock();
-				DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start to %1\n", start));
+				if (p->bbt().ticks != 0) {
+
+					/* We do not want an arbitrary off-beat
+					 * BBT marker to interrupt the grid. So
+					 * round up from the marker's BBT time
+					 * to the nearest appropriate beat/bar
+					 * unit, and then reset from there.
+					 */
+
+					BBT_Time on_bar;
+
+					if (bar_mod == 1) {
+						on_bar = p->bbt().round_up_to_bar ();
+					} else {
+						on_bar = mp->round_up_to_beat_div (p->bbt(), beat_div);
+					}
+
+					bbt = BBT_Argument (metric.reftime(), on_bar);
+					BBT_Offset delta = Temporal::bbt_delta (on_bar, p->bbt());
+
+					if (delta != BBT_Offset ()) {
+						Beats beats_delta = mp->to_quarters (delta);
+						start = tp->superclock_at (tp->beats() + beats_delta);
+						DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start using bbt %1 as %2 via %3 (rounded by %4 beats %5)\n", p->bbt(), bbt, on_bar, delta, beats_delta));
+					} else {
+						start = p->sclock();
+						DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start using bbt %1 as %2 via %3 (rounded by %4)\n", p->bbt(), bbt, on_bar, delta));
+					}
+
+					DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start to %1\n", start));
+
+				} else {
+
+					bbt = BBT_Argument (metric.reftime(), p->bbt());
+					DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start using bbt %1 as %2\n", p->bbt(), bbt));
+					start = p->sclock();
+					DEBUG_TRACE (DEBUG::Grid, string_compose ("reset start to %1\n", start));
+				}
 
 				/* Advance p to the next point */
 
@@ -3012,10 +3041,10 @@ std::operator<<(std::ostream& str, TempoPoint const & t)
 std::ostream&
 std::operator<<(std::ostream& str, MusicTimePoint const & p)
 {
-	str << "MP @ ";
-	str << *((Point const *) &p);
-	str << *((Tempo const *) &p);
-	str << *((Meter const *) &p);
+	str << "MP @ "
+	    << *((Point const *) &p) << ' '
+	    << *((Tempo const *) &p) << ' ' 
+	    << *((Meter const *) &p);
 	return str;
 }
 
@@ -3130,33 +3159,36 @@ TempoMap::bbt_walk (BBT_Argument const & bbt, BBT_Offset const & o) const
 	 * TempoMetric in effect after each addition
 	 */
 
-#define TEMPO_CHECK_FOR_NEW_METRIC                                      \
-	if (((next_t != _tempos.end()) && (start >= next_t->bbt())) || \
-	    ((next_m != _meters.end()) && (start >= next_m->bbt()))) { \
+#define TEMPO_CHECK_FOR_NEW_METRIC \
+	{ \
 		/* need new metric */ \
-		if (start >= next_t->bbt()) { \
-			if (start >= next_m->bbt()) { \
-				metric = TempoMetric (*const_cast<TempoPoint*>(&*next_t), *const_cast<MeterPoint*>(&*next_m)); \
-				++next_t; \
-				++next_m; \
-			} else { \
-				metric = TempoMetric (*const_cast<TempoPoint*>(&*next_t), metric.meter()); \
-				++next_t; \
-			} \
-		} else if (start >= next_m->bbt()) { \
+		bool advance_t = false; \
+		bool advance_m = false; \
+		if (next_t != _tempos.end() && (start >= next_t->bbt())) { \
+			advance_t = true; \
+		}\
+		if (next_m != _meters.end() && (start >= next_m->bbt())) { \
+			advance_m = true; \
+		} \
+		if (advance_t && advance_m) { \
+			metric = TempoMetric (*const_cast<TempoPoint*>(&*next_t), *const_cast<MeterPoint*>(&*next_m)); \
+			++next_t; \
+			++next_m; \
+		} else if (advance_t && !advance_m) { \
+			metric = TempoMetric (*const_cast<TempoPoint*>(&*next_t), metric.meter()); \
+			++next_t; \
+		} else if (advance_m && !advance_t) { \
 			metric = TempoMetric (metric.tempo(), *const_cast<MeterPoint*>(&*next_m)); \
 			++next_m; \
 		} \
 	}
 
 	for (int32_t b = 0; b < offset.bars; ++b) {
-
 		TEMPO_CHECK_FOR_NEW_METRIC;
 		start.bars += 1;
 	}
 
 	for (int32_t b = 0; b < offset.beats; ++b) {
-
 		TEMPO_CHECK_FOR_NEW_METRIC;
 		start.beats += 1;
 		if (start.beats > metric.divisions_per_bar()) {
@@ -4479,11 +4511,6 @@ TempoMap::parse_tempo_state_3x (const XMLNode& node, LegacyTempoState& lts)
 		} else {
 			lts.end_note_types_per_minute = -1.0;
 		}
-	}
-
-	if (!node.get_property ("active", lts.active)) {
-		warning << _("TempoSection XML node has no \"active\" property") << endmsg;
-		lts.active = true;
 	}
 
 	return 0;

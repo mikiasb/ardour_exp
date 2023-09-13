@@ -145,6 +145,7 @@ class QuantizeDialog;
 class RegionPeakCursor;
 class RhythmFerret;
 class RulerDialog;
+class SectionBox;
 class Selection;
 class SelectionPropertiesBox;
 class SoundFileOmega;
@@ -351,6 +352,10 @@ public:
 	void ensure_time_axis_view_is_visible (TimeAxisView const & tav, bool at_top);
 	void tav_zoom_step (bool coarser);
 	void tav_zoom_smooth (bool coarser, bool force_all);
+
+	void                         cycle_marker_click_behavior ();
+	void                         set_marker_click_behavior (Editing::MarkerClickBehavior);
+	Editing::MarkerClickBehavior get_marker_click_behavior () const { return marker_click_behavior; }
 
 	/* stuff that AudioTimeAxisView and related classes use */
 
@@ -624,9 +629,6 @@ public:
 	void remove_region_marker (ARDOUR::CueMarker&);
 	void make_region_markers_global (bool as_cd_markers);
 
-	Editing::TempoEditBehavior tempo_edit_behavior() const { return _tempo_edit_behavior; }
-	void set_tempo_edit_behavior (Editing::TempoEditBehavior teb);
-
 protected:
 	void map_transport_state ();
 	void map_position_change (samplepos_t);
@@ -687,6 +689,8 @@ private:
 	Editing::SnapMode  internal_snap_mode;
 	Editing::MouseMode effective_mouse_mode () const;
 
+	Editing::MarkerClickBehavior marker_click_behavior;
+
 	enum JoinObjectRangeState {
 		JOIN_OBJECT_RANGE_NONE,
 		/** `join object/range' mode is active and the mouse is over a place where object mode should happen */
@@ -719,6 +723,7 @@ private:
 	void location_flags_changed (ARDOUR::Location*);
 	void refresh_location_display ();
 	void update_section_rects ();
+	bool section_rect_event (GdkEvent*, ARDOUR::Location*, ArdourCanvas::Rectangle*, std::string);
 	void refresh_location_display_internal (const ARDOUR::Locations::LocationList&);
 	void add_new_location (ARDOUR::Location*);
 	ArdourCanvas::Container* add_new_location_internal (ARDOUR::Location*);
@@ -735,6 +740,7 @@ private:
 	void toggle_marker_lines ();
 	void set_marker_line_visibility (bool);
 	void update_selection_markers ();
+	void update_section_box ();
 
 	void jump_forward_to_mark ();
 	void jump_backward_to_mark ();
@@ -854,6 +860,7 @@ private:
 	void collect_new_region_view (RegionView*);
 	void collect_and_select_new_region_view (RegionView*);
 
+	Gtk::Menu section_box_menu;
 	Gtk::Menu track_context_menu;
 	Gtk::Menu track_region_context_menu;
 	Gtk::Menu track_selection_context_menu;
@@ -865,10 +872,11 @@ private:
 	Gtk::Menu* build_track_bus_context_menu ();
 	Gtk::Menu* build_track_region_context_menu ();
 	Gtk::Menu* build_track_selection_context_menu ();
+	void add_section_context_items (Gtk::Menu_Helpers::MenuList&);
 	void add_dstream_context_items (Gtk::Menu_Helpers::MenuList&);
 	void add_bus_context_items (Gtk::Menu_Helpers::MenuList&);
 	void add_region_context_items (Gtk::Menu_Helpers::MenuList&, std::shared_ptr<ARDOUR::Track>);
-	void add_selection_context_items (Gtk::Menu_Helpers::MenuList&);
+	void add_selection_context_items (Gtk::Menu_Helpers::MenuList&, bool time_selection_only = false);
 	Gtk::MenuItem* _popup_region_menu_item;
 
 	void popup_control_point_context_menu (ArdourCanvas::Item*, GdkEvent*);
@@ -920,9 +928,7 @@ private:
 	Gtk::EventBox            time_bars_event_box;
 	Gtk::VBox                time_bars_vbox;
 
- 	ArdourCanvas::Container* tempo_meta_group;
 	ArdourCanvas::Container* tempo_group;
-	ArdourCanvas::Container* mapping_group;
 	ArdourCanvas::Container* meter_group;
 	ArdourCanvas::Container* marker_group;
 	ArdourCanvas::Container* range_marker_group;
@@ -967,6 +973,9 @@ private:
 	 */
 	ArdourCanvas::Rectangle* _canvas_drop_zone;
 	bool canvas_drop_zone_event (GdkEvent* event);
+
+	ArdourCanvas::Rectangle* _canvas_grid_zone;
+	bool canvas_grid_zone_event (GdkEvent* event);
 
 	Glib::RefPtr<Gtk::ToggleAction> ruler_minsec_action;
 	Glib::RefPtr<Gtk::ToggleAction> ruler_timecode_action;
@@ -1064,7 +1073,6 @@ private:
 	Gtk::Menu* editor_ruler_menu;
 
 	ArdourCanvas::Rectangle* tempo_bar;
-	ArdourCanvas::Rectangle* mapping_bar;
 	ArdourCanvas::Rectangle* meter_bar;
 	ArdourCanvas::Rectangle* marker_bar;
 	ArdourCanvas::Rectangle* range_marker_bar;
@@ -1783,6 +1791,8 @@ private:
 
 	void mid_tempo_change (MidTempoChanges);
 
+	Editing::EditPoint edit_point() const { return _edit_point; }
+
 protected:
 	void _commit_tempo_map_edit (Temporal::TempoMap::WritableSharedPtr&, bool with_update = false);
 
@@ -1795,6 +1805,7 @@ private:
 
 	/* non-public event handlers */
 
+	bool canvas_section_box_event (GdkEvent* event);
 	bool canvas_playhead_cursor_event (GdkEvent* event, ArdourCanvas::Item*);
 	bool track_canvas_scroll (GdkEventScroll* event);
 
@@ -1963,6 +1974,7 @@ private:
 	ArdourWidgets::ArdourButton mouse_draw_button;
 	ArdourWidgets::ArdourButton mouse_move_button;
 	ArdourWidgets::ArdourButton mouse_timefx_button;
+	ArdourWidgets::ArdourButton mouse_grid_button;
 	ArdourWidgets::ArdourButton mouse_content_button;
 	ArdourWidgets::ArdourButton mouse_audition_button;
 	ArdourWidgets::ArdourButton mouse_cut_button;
@@ -2049,6 +2061,11 @@ private:
 
 	Glib::RefPtr<Gtk::RadioAction> zoom_focus_action (Editing::ZoomFocus);
 
+	/* Marker Click Radio */
+	Glib::RefPtr<Gtk::RadioAction> marker_click_behavior_action (Editing::MarkerClickBehavior);
+	void marker_click_behavior_chosen (Editing::MarkerClickBehavior);
+	void marker_click_behavior_selection_done (Editing::MarkerClickBehavior);
+
 	Gtk::HBox _track_box;
 
 	Gtk::HBox _zoom_box;
@@ -2097,6 +2114,8 @@ private:
 	bool get_smart_mode() const;
 
 	bool audio_region_selection_covers (samplepos_t where);
+
+	SectionBox* _section_box;
 
 	/* playhead and edit cursor */
 
@@ -2547,10 +2566,8 @@ private:
 
 	void remove_gap_marker_callback (Temporal::timepos_t at, Temporal::timecnt_t distance);
 
+	Editing::GridType determine_mapping_grid_snap (Temporal::timepos_t t);
 	void choose_mapping_drag (ArdourCanvas::Item*, GdkEvent*);
-
-	Editing::TempoEditBehavior _tempo_edit_behavior;
-	void tempo_edit_behavior_toggled (Editing::TempoEditBehavior);
 
 	template<typename T>
 	Temporal::TimeDomain drag_time_domain (T* thing_with_time_domain) {

@@ -30,6 +30,7 @@
 #include "keyboard.h"
 #include "main_clock.h"
 #include "public_editor.h"
+#include "ui_config.h"
 #include "utils.h"
 
 #include "pbd/i18n.h"
@@ -50,13 +51,13 @@ EditorSections::EditorSections ()
 	c->set_resizable (true);
 	c->set_data ("mouse-edits-require-mod1", (gpointer)0x1);
 
-	CellRendererText* section_name_cell = dynamic_cast<CellRendererText*> (c->get_first_cell ());
+	CellRendererText* section_name_cell     = dynamic_cast<CellRendererText*> (c->get_first_cell ());
 	section_name_cell->property_editable () = true;
 	section_name_cell->signal_edited ().connect (sigc::mem_fun (*this, &EditorSections::name_edited));
 
 	_view.append_column (_("Start"), _columns.s_start);
 	_view.append_column (_("End"), _columns.s_end);
-	_view.set_enable_search(false);
+	_view.set_enable_search (false);
 	_view.set_headers_visible (true);
 	_view.get_selection ()->set_mode (Gtk::SELECTION_SINGLE);
 
@@ -86,7 +87,7 @@ EditorSections::EditorSections ()
 
 	ARDOUR_UI::instance ()->primary_clock->mode_changed.connect (sigc::mem_fun (*this, &EditorSections::clock_format_changed));
 
-	_selection_change = PublicEditor::instance ().get_selection ().TimeChanged.connect (sigc::mem_fun (*this, &EditorSections::clear_selection));
+	_selection_change = PublicEditor::instance ().get_selection ().TimeChanged.connect (sigc::mem_fun (*this, &EditorSections::update_time_selection));
 }
 
 void
@@ -109,6 +110,15 @@ EditorSections::set_session (Session* s)
 }
 
 void
+EditorSections::select (ARDOUR::Location* l)
+{
+	LocationRowMap::iterator map_it = _location_row_map.find (l);
+	if (map_it != _location_row_map.end ()) {
+		_view.get_selection ()->select (*map_it->second);
+	}
+}
+
+void
 EditorSections::redisplay ()
 {
 	if (_no_redisplay) {
@@ -116,6 +126,7 @@ EditorSections::redisplay ()
 	}
 	_view.set_model (Glib::RefPtr<ListStore> ());
 	_model->clear ();
+	_location_row_map.clear ();
 
 	if (_session == 0) {
 		return;
@@ -135,6 +146,8 @@ EditorSections::redisplay ()
 			newrow[_columns.location] = l;
 			newrow[_columns.start]    = start;
 			newrow[_columns.end]      = end;
+
+			_location_row_map.insert (pair<ARDOUR::Location*, Gtk::TreeModel::iterator> (l, newrow));
 		}
 	} while (l);
 
@@ -189,9 +202,29 @@ EditorSections::scroll_row_timeout ()
 }
 
 void
-EditorSections::clear_selection ()
+EditorSections::update_time_selection ()
 {
 	_view.get_selection ()->unselect_all ();
+
+	Selection& selection (PublicEditor::instance ().get_selection ());
+
+	if (selection.time.empty ()) {
+		return;
+	}
+
+	Locations* loc = _session->locations ();
+	Location*  l   = NULL;
+	do {
+		timepos_t start, end;
+		l = loc->next_section (l, start, end);
+		if (l) {
+			if (start == selection.time.start_time () && end == selection.time.end_time ()) {
+				LocationRowMap::iterator map_it = _location_row_map.find (l);
+				TreeModel::iterator      j      = map_it->second;
+				_view.get_selection ()->select (*j);
+			}
+		}
+	} while (l);
 }
 
 void
@@ -207,8 +240,31 @@ EditorSections::selection_changed ()
 	timepos_t end   = row[_columns.end];
 
 	_selection_change.block ();
+
+	switch (PublicEditor::instance ().current_mouse_mode ()) {
+		case Editing::MouseRange:
+			/* OK */
+			break;
+		case Editing::MouseObject:
+			if (ActionManager::get_toggle_action ("MouseMode", "set-mouse-mode-object-range")->get_active ()) {
+				/* smart mode; OK */
+				break;
+			}
+			/*fallthrough*/
+		default:
+			Glib::RefPtr<RadioAction> ract = ActionManager::get_radio_action (X_("MouseMode"), X_("set-mouse-mode-range"));
+			ract->set_active (true);
+			break;
+	}
+
 	Selection& s (PublicEditor::instance ().get_selection ());
+	s.clear ();
 	s.set (start, end);
+
+	if (UIConfiguration::instance ().get_follow_edits ()) {
+		_session->request_locate (start.samples());
+	}
+
 	_selection_change.unblock ();
 }
 
@@ -341,7 +397,7 @@ EditorSections::drag_data_received (Glib::RefPtr<Gdk::DragContext> const& contex
 	/* Section is POD, memcpy is fine.
 	 * data is free()ed by ~Gtk::SelectionData */
 	Section s;
-	memcpy (&s, data.get_data (), sizeof (Section));
+	memcpy ((void*) &s, data.get_data (), sizeof (Section));
 
 	if (op == CutPasteSection && to > s.start) {
 		/* offset/ripple `to` when using CutPasteSection */
@@ -356,6 +412,20 @@ EditorSections::drag_data_received (Glib::RefPtr<Gdk::DragContext> const& contex
 		_session->cut_copy_section (s.start, s.end, to, op);
 	}
 	redisplay ();
+}
+
+bool
+EditorSections::rename_selected_section ()
+{
+	if (_view.get_selection ()->count_selected_rows () != 1) {
+		return false;
+	}
+
+	TreeView::Selection::ListHandle_Path rows = _view.get_selection ()->get_selected_rows ();
+
+	_view.set_cursor (*rows.begin (), *_view.get_column (0), true);
+
+	return true;
 }
 
 bool
@@ -375,6 +445,9 @@ EditorSections::delete_selected_section ()
 		_session->cut_copy_section (start, end, timepos_t (0), DeleteSection);
 	}
 	redisplay ();
+
+	PublicEditor::instance ().get_selection ().clear ();
+
 	return true;
 }
 
@@ -401,6 +474,8 @@ EditorSections::show_context_menu (int button, int time)
 	using namespace Gtk::Menu_Helpers;
 	Gtk::Menu* menu  = ARDOUR_UI_UTILS::shared_popup_menu ();
 	MenuList&  items = menu->items ();
+	items.push_back (MenuElem (_("Rename the selected Section"), hide_return (sigc::mem_fun (*this, &EditorSections::rename_selected_section))));
+	items.push_back (SeparatorElem ());
 	items.push_back (MenuElem (_("Remove the selected Section"), hide_return (sigc::mem_fun (*this, &EditorSections::delete_selected_section))));
 	menu->popup (button, time);
 }
@@ -414,6 +489,25 @@ EditorSections::button_press (GdkEventButton* ev)
 	int             celly;
 
 	if (!_view.get_path_at_pos ((int)ev->x, (int)ev->y, path, column, cellx, celly)) {
+		return false;
+	}
+
+	if (ev->type == GDK_2BUTTON_PRESS || ev->type == GDK_3BUTTON_PRESS) {
+		TreeView::Selection::ListHandle_Path rows = _view.get_selection ()->get_selected_rows ();
+		assert (!rows.empty ());
+		Gtk::TreeModel::Row row = *_model->get_iter (*rows.begin ());
+
+		if (column == _view.get_column (1)) {
+			timepos_t start = row[_columns.start];
+			_session->request_locate (start.samples());
+		} else if (column == _view.get_column (2)) {
+			timepos_t end   = row[_columns.end];
+			_session->request_locate (end.samples());
+		} else {
+			/* double-click edits name even with `mouse-edits-require-mod1` stack */
+			_view.set_cursor (*rows.begin (), *_view.get_column(0), true);
+			return true;
+		}
 		return false;
 	}
 

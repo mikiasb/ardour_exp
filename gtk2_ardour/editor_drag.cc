@@ -3244,7 +3244,7 @@ TempoCurveDrag::aborted (bool moved)
 
 TempoMarkerDrag::TempoMarkerDrag (Editor* e, ArdourCanvas::Item* i)
 	: Drag (e, i, Temporal::BeatTime)
-	, _before_state (0)
+	, _before_state (nullptr)
 {
 	DEBUG_TRACE (DEBUG::Drags, "New TempoMarkerDrag\n");
 
@@ -3260,15 +3260,9 @@ void
 TempoMarkerDrag::start_grab (GdkEvent* event, Gdk::Cursor* cursor)
 {
 	Drag::start_grab (event, cursor);
-	if (!_real_section->active ()) {
-		show_verbose_cursor_text (_("inactive"));
-	} else {
-		show_verbose_cursor_time (adjusted_current_time (event));
-
-		/* setup thread-local tempo map ptr as a writable copy */
-
-		map = _editor->begin_tempo_map_edit ();
-	}
+	show_verbose_cursor_time (adjusted_current_time (event));
+	/* setup thread-local tempo map ptr as a writable copy */
+	map = _editor->begin_tempo_map_edit ();
 }
 
 void
@@ -3280,10 +3274,6 @@ TempoMarkerDrag::setup_pointer_offset ()
 void
 TempoMarkerDrag::motion (GdkEvent* event, bool first_move)
 {
-	if (!_marker->tempo ().active ()) {
-		return;
-	}
-
 	if (first_move) {
 		/* get current state */
 		_before_state = &map->get_state ();
@@ -3318,9 +3308,6 @@ TempoMarkerDrag::motion (GdkEvent* event, bool first_move)
 void
 TempoMarkerDrag::finished (GdkEvent* event, bool movement_occurred)
 {
-	if (!_marker->tempo ().active ()) {
-		return;
-	}
 
 	if (!movement_occurred) {
 		/* reset the per-thread tempo map ptr back to the current
@@ -3353,14 +3340,6 @@ TempoMarkerDrag::aborted (bool moved)
 	 */
 
 	_editor->abort_tempo_map_edit ();
-
-	// _point->end_float ();
-	_marker->set_position (timepos_t (_marker->tempo ().beats ()));
-
-	if (moved) {
-		// delete the dummy (hidden) marker we used for events while moving.
-		delete _marker;
-	}
 }
 
 /********* */
@@ -4637,7 +4616,7 @@ MarkerDrag::finished (GdkEvent* event, bool movement_occurred)
 		}
 
 		/* just a click, do nothing but finish
-		   off the selection process
+		   off the selection process (and locate if appropriate)
 		*/
 
 		Selection::Operation op = ArdourKeyboard::selection_type (event->button.state);
@@ -4664,6 +4643,26 @@ MarkerDrag::finished (GdkEvent* event, bool movement_occurred)
 		if (_selection_changed) {
 			_editor->begin_reversible_selection_op (X_("Select Marker Release"));
 			_editor->commit_reversible_selection_op ();
+		}
+
+		bool do_locate;
+		switch (_editor->get_marker_click_behavior ()) {
+			case MarkerClickSelectOnly:
+				do_locate = false;
+				break;
+			case MarkerClickLocate:
+				do_locate = true;
+				break;
+			case MarkerClickLocateWhenStopped:
+				do_locate = !_editor->session()->transport_state_rolling ();
+		}
+
+		if (do_locate && !_editor->session()->config.get_external_sync () && (_editor->edit_point() != Editing::EditAtSelectedMarker)) {
+			bool is_start;
+			Location* location = _editor->find_location_from_marker (_marker, is_start);
+			if (location) {
+				_editor->session ()->request_locate (is_start ? location->start().samples() : location->end().samples());
+			}
 		}
 
 		return;
@@ -5858,8 +5857,10 @@ SelectionMarkerDrag::SelectionMarkerDrag (Editor* e, ArdourCanvas::Item* i)
 	bool ok = _editor->get_selection_extents (_start_at_start, _end_at_start);
 	assert (ok);
 
-	// SelectionStart, SelectionEnd
-	cout << " SelectionMarkerDrag " << _start_at_start << " - " << _end_at_start << " " << i->whoami() << "\n";
+	/* if the user adjusts the SelectionMarker, convert the selection to a timeline range (no track selection) */
+	_editor->get_selection ().clear_objects ();
+	_editor->get_selection ().clear_tracks ();
+	_editor->get_selection ().set (_start_at_start, _end_at_start);
 }
 
 void

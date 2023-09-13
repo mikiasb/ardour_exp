@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2008-2009 David Robillard <d@drobilla.net>
- * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2023 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2023 Ben Loftis <ben@harrisonaudio.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,21 +17,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef __ardour_midi_scroomer_h__
-#define __ardour_midi_scroomer_h__
+#ifndef __gtk_ardour_section_box_h__
+#define __gtk_ardour_section_box_h__
 
-#include "widgets/scroomer.h"
+#include "ardour/types.h"
 
-class MidiScroomer : public ArdourWidgets::Scroomer
+#include "canvas/rectangle.h"
+#include "canvas/types.h"
+
+class Editor;
+
+class SectionBox : public ArdourCanvas::Rectangle
 {
 public:
-	MidiScroomer(Gtk::Adjustment&);
-	~MidiScroomer();
+	SectionBox (Editor&, ArdourCanvas::Item*);
 
-	bool on_expose_event(GdkEventExpose*);
-	void on_size_request(Gtk::Requisition*);
+	void set_position (samplepos_t, samplepos_t);
 
-	void get_colors(double color[], Component comp);
+private:
+	Editor& _editor;
 };
 
-#endif /* __ardour_midi_scroomer_h__ */
+#endif // __gtk_ardour_editor_cursors_h__
